@@ -21,7 +21,7 @@ impl JobQueue {
 
     /// Enqueue job and notify sleeping thread
     pub fn add(&self, job: Job) {
-        if self.finished.load(Ordering::Acquire) {
+        if self.finished.load(Ordering::Relaxed) {
             return;
         }
 
@@ -31,7 +31,7 @@ impl JobQueue {
 
     /// Set finish flag and wake up sleeping threads
     pub fn finish_ntf(&self) {
-        self.finished.store(true, Ordering::Release);
+        self.finished.store(true, Ordering::Relaxed);
         self.not_empty.notify_all();
     }
 
@@ -40,7 +40,7 @@ impl JobQueue {
     ///
     /// Return `None` if the queue will not give out elements no more.
     pub fn get_blocked(&self) -> Option<Job> {
-        if self.finished.load(Ordering::Acquire) {
+        if self.finished.load(Ordering::Relaxed) {
             return None;
         }
 
@@ -50,7 +50,7 @@ impl JobQueue {
             // If there are no elements, then thread is going to sleep
             self.not_empty.wait(&mut lock);
             // Probably, the thread woken up because it's time to return
-            if self.finished.load(Ordering::Acquire) {
+            if self.finished.load(Ordering::Relaxed) {
                 return None;
             }
         }
