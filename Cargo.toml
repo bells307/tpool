@@ -1,0 +1,12 @@
+[package]
+name = "tpool"
+description = "So simple thread pool"
+version = "0.1.0"
+authors = ["Bells307"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/bells307/tpool"
+
+[dependencies]
+drop-panic = "0.1.0"
+parking_lot = "0.12.3"
