@@ -3,34 +3,42 @@ use drop_panic::drop_panic;
 use parking_lot::Mutex;
 use std::{
     collections::HashMap,
-    sync::Arc,
+    num::NonZeroUsize,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     thread::{self, JoinHandle, ThreadId},
 };
 
-pub(super) struct Inner {
-    name: String,
+pub(super) struct ThreadPoolInner {
     job_queue: JobQueue,
     threads: Mutex<Option<HashMap<ThreadId, JoinHandle<()>>>>,
+    thread_count: AtomicUsize,
+    max_threads: usize,
 }
 
-impl Inner {
-    pub fn new(name: String, thread_count: usize) -> Arc<Self> {
-        let this = Arc::new(Self {
-            name,
+impl ThreadPoolInner {
+    pub fn new(max_threads: NonZeroUsize) -> Arc<Self> {
+        Arc::new(Self {
             job_queue: JobQueue::new(),
             threads: Mutex::new(None),
-        });
-
-        for _ in 0..thread_count {
-            Arc::clone(&this).create_worker();
-        }
-
-        this
+            thread_count: AtomicUsize::new(0),
+            max_threads: max_threads.get(),
+        })
     }
 
     /// Enqueue job
-    pub fn spawn(&self, job: impl Fn() + Send + 'static) {
-        self.job_queue.add(Box::new(job));
+    pub fn spawn(this: &Arc<Self>, job: impl Fn() + Send + 'static) {
+        // Lazy creation of new threads: only if there are no threads ready to take on
+        // the task, do we create a new one
+        if this.thread_count.load(Ordering::Acquire) < this.max_threads
+            && this.job_queue.waiters() == 0
+        {
+            Arc::clone(this).create_worker();
+        }
+
+        this.job_queue.add(Box::new(job));
     }
 
     pub fn join(&self) -> Result<(), JoinError> {
@@ -54,14 +62,13 @@ impl Inner {
         }
     }
 
-    /// Создать поток для выполнения задач
+    /// Create a thread for executing tasks
     fn create_worker(self: Arc<Self>) {
         let this = Arc::clone(&self);
 
         let jh = thread::Builder::new()
-            .name(self.name.clone())
             .spawn(move || {
-                // In case of thread panic that object will call the recovery function
+                // In case of thread panic, this object will call the recovery function
                 drop_panic! {
                     Arc::clone(&this).panic_handler()
                 };
@@ -74,11 +81,13 @@ impl Inner {
         let id = jh.thread().id();
 
         let mut lock = self.threads.lock();
+
         match *lock {
             Some(ref mut threads) => match threads.get_mut(&id) {
                 Some(_) => panic!("thread with id {:?} already created", id),
                 None => {
                     threads.insert(id, jh);
+                    self.thread_count.fetch_add(1, Ordering::Release);
                 }
             },
             None => *lock = Some(HashMap::from([(id, jh)])),
@@ -86,15 +95,12 @@ impl Inner {
     }
 
     /// Working thread panic handling
-    fn panic_handler(self: Arc<Self>) {
+    fn panic_handler(&self) {
         let id = thread::current().id();
 
         if let Some(threads) = self.threads.lock().as_mut() {
             threads.remove(&id);
         };
-
-        // Recreate the worker thread
-        self.create_worker();
     }
 
     /// Thread working cycle

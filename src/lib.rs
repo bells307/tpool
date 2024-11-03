@@ -3,9 +3,8 @@ mod inner;
 mod queue;
 
 pub use error::JoinError;
-
-use self::inner::Inner;
-use std::sync::Arc;
+use inner::ThreadPoolInner;
+use std::{num::NonZeroUsize, sync::Arc};
 
 #[cfg(test)]
 mod tests;
@@ -14,16 +13,16 @@ mod tests;
 pub type Job = Box<dyn Fn() + Send>;
 
 #[derive(Clone)]
-pub struct ThreadPool(Arc<Inner>);
+pub struct ThreadPool(Arc<ThreadPoolInner>);
 
 impl ThreadPool {
-    pub fn new(name: String, thread_count: usize) -> Self {
-        Self(Inner::new(name, thread_count))
+    pub fn new(max_threads: NonZeroUsize) -> Self {
+        Self(ThreadPoolInner::new(max_threads))
     }
 
     /// Spawn new job for thread pool
     pub fn spawn(&self, job: impl Fn() + Send + 'static) {
-        self.0.spawn(job)
+        ThreadPoolInner::spawn(&self.0, job)
     }
 
     /// Wait threadpool to complete all jobs
